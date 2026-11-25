@@ -1,0 +1,49 @@
+name: Release
+on:
+  push:
+    tags: ['v*', '[0-9]*']
+
+jobs:
+  linux:
+    uses: ./.github/workflows/linux.yaml
+  windows:
+    uses: ./.github/workflows/windows.yaml
+  appimage:
+    uses: ./.github/workflows/appimage.yaml
+  flatpak:
+    uses: ./.github/workflows/flatpak.yaml
+  freebsd:
+    uses: ./.github/workflows/freebsd.yaml
+
+  release:
+    needs: [linux, windows, appimage, flatpak, freebsd]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Package archives
+        run: |
+          tag="${GITHUB_REF_NAME}"
+
+          chmod +x openut-linux-ubuntu/* openut-linux-fedora/* openut-freebsd-x86_64/*
+          tar -czf "openut-linux-ubuntu-${tag}.tar.gz" -C openut-linux-ubuntu .
+          tar -czf "openut-linux-fedora-${tag}.tar.gz" -C openut-linux-fedora .
+          tar -czf "openut-freebsd-x86_64-${tag}.tar.gz" -C openut-freebsd-x86_64 .
+          (cd openut-windows-mingw && zip -r "../openut-windows-${tag}.zip" .)
+          mv openut-appimage-x86_64/*.AppImage "openut-${tag}-x86_64.AppImage"
+          mv openut-flatpak-x86_64/*.flatpak "openut-${tag}.flatpak"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            openut-linux-ubuntu-*.tar.gz
+            openut-linux-fedora-*.tar.gz
+            openut-freebsd-x86_64-*.tar.gz
+            openut-windows-*.zip
+            openut-*-x86_64.AppImage
+            openut-*.flatpak

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Unreal Tournament (OpenUT)
+Comment=Open-source reimplementation of the Unreal Tournament engine
+Exec=openut
+Icon=io.github.jarmitage99.OpenUT
+Categories=Game;ActionGame;
