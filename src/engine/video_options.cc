@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ut {
@@ -44,6 +45,13 @@ namespace ut {
         return std::clamp(setting == 0 ? screenHeight / 540 : setting, 1, 4);
     }
 
+    std::function<void(DisplayMode)> setDisplayModeHook;
+
+    DisplayMode displayModeSetting()
+    {
+        return static_cast<DisplayMode>(std::clamp(videoSetting("DisplayMode", 0), 0, 2));
+    }
+
     namespace {
         constexpr uint8_t DE_Change = 1;
 
@@ -64,6 +72,7 @@ namespace ut {
         const std::vector<ComboOption>& comboOptions()
         {
             static const std::vector<ComboOption> options = {
+                { "Display Mode", "Windowed runs in a window, Fullscreen switches the monitor to the chosen resolution, Borderless covers the desktop at its own resolution.", "DisplayMode", 0, { "Windowed", "Fullscreen", "Borderless" } },
                 { "Anti-Aliasing", "Smooth jagged edges with multisampling. Higher settings cost more performance.", "Multisampling", 0, { "Off", "2x", "4x", "8x" } },
                 { "Anisotropic Filtering", "Keep textures sharp when seen at an angle.", "Anisotropy", 0, { "Off", "2x", "4x", "8x", "16x" } },
                 { "UI Scale", "Draw the menus and console larger, for high resolution screens. Auto picks the size from the screen height.", "UIScale", 0, { "Auto", "Off", "2x", "3x", "4x" } },
@@ -211,7 +220,16 @@ namespace ut {
                 if (text == option.caption) {
                     vm::Call index(control, Name("GetSelectedIndex"));
                     index.run();
-                    saveVideoSetting(option.key, std::to_string(*reinterpret_cast<int32_t*>(index.returnValue()) + option.firstValue));
+                    int32_t value = *reinterpret_cast<int32_t*>(index.returnValue()) + option.firstValue;
+                    if (std::string_view(option.key) == "DisplayMode") {
+                        DisplayMode mode = static_cast<DisplayMode>(std::clamp(value, 0, 2));
+                        if (mode != displayModeSetting() && setDisplayModeHook) {
+                            setDisplayModeHook(mode);
+                            vm::Call(self, Name("LoadAvailableSettings")).run();
+                        }
+                    } else {
+                        saveVideoSetting(option.key, std::to_string(value));
+                    }
                 }
             }
             for (const CheckOption& option : checkOptions()) {

@@ -27,6 +27,7 @@ namespace ut {
         std::function<std::string()> resolutionsHook;
         std::function<void(int, int)> setResHook;
         std::function<void()> toggleFullscreenHook;
+        std::function<void()> endFullscreenHook;
         std::function<void()> reconnectHook;
         std::function<void()> screenshotHook;
 
@@ -359,6 +360,12 @@ namespace ut {
                 int height = 0;
                 if (setResHook && std::sscanf(rest.c_str(), "%dx%d", &width, &height) == 2 && width > 0 && height > 0) {
                     setResHook(width, height);
+                }
+                return {};
+            }
+            if (iequals(word, "EndFullscreen")) {
+                if (endFullscreenHook) {
+                    endFullscreenHook();
                 }
                 return {};
             }

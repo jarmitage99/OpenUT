@@ -486,47 +486,146 @@ namespace {
         {
         }
 
-        void saveVideoMode(bool fullscreen, int width, int height)
+        static bool isWindowed(ut::DisplayMode mode)
+        {
+            return mode == ut::DisplayMode::Windowed;
+        }
+
+        std::pair<int, int> desktopSize() const
+        {
+            SDL_DisplayMode desktop {};
+            if (SDL_GetDesktopDisplayMode(std::max(SDL_GetWindowDisplayIndex(window), 0), &desktop) != 0) {
+                return { options.width, options.height };
+            }
+            return { desktop.w, desktop.h };
+        }
+
+        void saveVideoMode(ut::DisplayMode mode, int width, int height)
         {
             ut::Ini& ini = ut::config::system();
             std::string section = ut::videoSection();
-            ini.set(section, fullscreen ? "FullscreenViewportX" : "WindowedViewportX", std::to_string(width));
-            ini.set(section, fullscreen ? "FullscreenViewportY" : "WindowedViewportY", std::to_string(height));
-            ini.set(section, "StartupFullscreen", fullscreen ? "True" : "False");
+            if (mode == ut::DisplayMode::Windowed) {
+                ini.set(section, "WindowedViewportX", std::to_string(width));
+                ini.set(section, "WindowedViewportY", std::to_string(height));
+            } else if (mode == ut::DisplayMode::Fullscreen) {
+                ini.set(section, "FullscreenViewportX", std::to_string(width));
+                ini.set(section, "FullscreenViewportY", std::to_string(height));
+            }
+            ini.set(section, "DisplayMode", std::to_string(static_cast<int>(mode)));
+            ini.set(section, "StartupFullscreen", isWindowed(mode) ? "False" : "True");
             ini.save();
         }
 
-        void applyVideoMode(bool fullscreen, int width, int height)
+        std::pair<int, int> savedSize(ut::DisplayMode mode) const
         {
-            if (fullscreen) {
-                SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            } else {
-                SDL_SetWindowFullscreen(window, 0);
-                SDL_SetWindowSize(window, width, height);
+            if (mode == ut::DisplayMode::Borderless) {
+                return desktopSize();
             }
+            if (mode == ut::DisplayMode::Fullscreen) {
+                auto [desktopWidth, desktopHeight] = desktopSize();
+                return { ut::videoSetting("FullscreenViewportX", desktopWidth), ut::videoSetting("FullscreenViewportY", desktopHeight) };
+            }
+            return { ut::videoSetting("WindowedViewportX", options.width), ut::videoSetting("WindowedViewportY", options.height) };
+        }
+
+        void applyVideoMode(ut::DisplayMode mode, int width, int height)
+        {
+            displayMode = mode;
+            if (!isWindowed(mode)) {
+                lastFullscreenMode = mode;
+            }
+            if (mode == ut::DisplayMode::Borderless) {
+                SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+                return;
+            }
+            if (mode == ut::DisplayMode::Fullscreen) {
+                SDL_DisplayMode wanted {};
+                wanted.w = width;
+                wanted.h = height;
+                SDL_DisplayMode closest {};
+                int display = std::max(SDL_GetWindowDisplayIndex(window), 0);
+                if (SDL_GetClosestDisplayMode(display, &wanted, &closest)) {
+                    SDL_SetWindowDisplayMode(window, &closest);
+                }
+                if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN_DESKTOP) != SDL_WINDOW_FULLSCREEN) {
+                    SDL_SetWindowFullscreen(window, 0);
+                    SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+                }
+                return;
+            }
+            SDL_SetWindowFullscreen(window, 0);
+            SDL_SetWindowBordered(window, SDL_TRUE);
+            SDL_SetWindowSize(window, width, height);
+            SDL_Rect bounds {};
+            if (SDL_GetDisplayUsableBounds(std::max(SDL_GetWindowDisplayIndex(window), 0), &bounds) == 0) {
+                SDL_SetWindowPosition(window, bounds.x + std::max((bounds.w - width) / 2, 0), bounds.y + std::max((bounds.h - height) / 2, 0));
+            }
+        }
+
+        void switchDisplayMode(ut::DisplayMode mode)
+        {
+            auto [width, height] = savedSize(mode);
+            applyVideoMode(mode, width, height);
+            saveVideoMode(mode, width, height);
         }
 
         std::string availableResolutions()
         {
             std::pair<int, int> current;
             SDL_GetWindowSize(window, &current.first, &current.second);
-            if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
+            if (displayMode == ut::DisplayMode::Borderless) {
                 return std::to_string(current.first) + "x" + std::to_string(current.second);
             }
-            int display = SDL_GetWindowDisplayIndex(window);
+            int display = std::max(SDL_GetWindowDisplayIndex(window), 0);
             std::vector<std::pair<int, int>> sizes;
             for (int i = 0; i < SDL_GetNumDisplayModes(display); i++) {
                 SDL_DisplayMode mode {};
-                if (SDL_GetDisplayMode(display, i, &mode) == 0 && mode.w >= 800 && mode.h >= 600) {
+                if (SDL_GetDisplayMode(display, i, &mode) == 0 && mode.w >= 640 && mode.h >= 480) {
                     sizes.emplace_back(mode.w, mode.h);
+                }
+            }
+            if (displayMode == ut::DisplayMode::Windowed) {
+                // Offer common window sizes as well, as long as they fit on the desktop.
+                static const std::pair<int, int> common[] = {
+                    { 640, 480 },
+                    { 800, 600 },
+                    { 1024, 768 },
+                    { 1152, 864 },
+                    { 1280, 720 },
+                    { 1280, 800 },
+                    { 1280, 960 },
+                    { 1280, 1024 },
+                    { 1366, 768 },
+                    { 1440, 900 },
+                    { 1600, 900 },
+                    { 1600, 1200 },
+                    { 1680, 1050 },
+                    { 1920, 1080 },
+                    { 1920, 1200 },
+                    { 2560, 1080 },
+                    { 2560, 1440 },
+                    { 2560, 1600 },
+                    { 3440, 1440 },
+                    { 3840, 2160 },
+                };
+                SDL_Rect usable {};
+                auto [desktopWidth, desktopHeight] = desktopSize();
+                if (SDL_GetDisplayUsableBounds(display, &usable) != 0) {
+                    usable = { 0, 0, desktopWidth, desktopHeight };
+                }
+                sizes.erase(std::remove_if(sizes.begin(), sizes.end(), [&](const std::pair<int, int>& size) {
+                    return size.first > desktopWidth || size.second > desktopHeight;
+                }),
+                    sizes.end());
+                for (const auto& size : common) {
+                    if (size.first <= usable.w && size.second <= usable.h) {
+                        sizes.push_back(size);
+                    }
                 }
             }
             sizes.push_back(current);
             std::sort(sizes.begin(), sizes.end());
             sizes.erase(std::unique(sizes.begin(), sizes.end()), sizes.end());
-            while (sizes.size() > 16) {
-                sizes.erase(sizes.front() == current ? sizes.begin() + 1 : sizes.begin());
-            }
             std::string text;
             for (const auto& [width, height] : sizes) {
                 if (!text.empty()) {
@@ -632,9 +731,17 @@ namespace {
                 return availableResolutions();
             };
             ut::console::setResHook = [this](int width, int height) {
-                bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-                applyVideoMode(fullscreen, width, height);
-                saveVideoMode(fullscreen, width, height);
+                if (displayMode == ut::DisplayMode::Borderless) {
+                    return;
+                }
+                applyVideoMode(displayMode, width, height);
+                int actualWidth = width;
+                int actualHeight = height;
+                SDL_GetWindowSize(window, &actualWidth, &actualHeight);
+                saveVideoMode(displayMode, actualWidth, actualHeight);
+            };
+            ut::setDisplayModeHook = [this](ut::DisplayMode mode) {
+                switchDisplayMode(mode);
             };
             ut::console::reconnectHook = [this]() {
                 if (!lastUrl.empty()) {
@@ -643,11 +750,12 @@ namespace {
                 }
             };
             ut::console::toggleFullscreenHook = [this]() {
-                bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0;
-                int width = ut::videoSetting(fullscreen ? "FullscreenViewportX" : "WindowedViewportX", 640);
-                int height = ut::videoSetting(fullscreen ? "FullscreenViewportY" : "WindowedViewportY", 480);
-                applyVideoMode(fullscreen, width, height);
-                saveVideoMode(fullscreen, width, height);
+                switchDisplayMode(isWindowed(displayMode) ? lastFullscreenMode : ut::DisplayMode::Windowed);
+            };
+            ut::console::endFullscreenHook = [this]() {
+                if (!isWindowed(displayMode)) {
+                    switchDisplayMode(ut::DisplayMode::Windowed);
+                }
             };
             ut::console::screenshotHook = [this]() {
                 std::filesystem::path directory = ut::config::system().path.parent_path() / "Screenshots";
@@ -663,8 +771,9 @@ namespace {
             };
             ut::console::applyAudioSettings();
             if (options.frames < 0 && !options.sizeGiven) {
-                bool fullscreen = ut::videoSetting("StartupFullscreen", 0) != 0;
-                applyVideoMode(fullscreen, ut::videoSetting(fullscreen ? "FullscreenViewportX" : "WindowedViewportX", options.width), ut::videoSetting(fullscreen ? "FullscreenViewportY" : "WindowedViewportY", options.height));
+                ut::DisplayMode mode = ut::displayModeSetting();
+                auto [width, height] = savedSize(mode);
+                applyVideoMode(mode, width, height);
             }
             ut::CanvasHooks& hooks = ut::canvasHooks();
             hooks.target = &renderer->canvas();
@@ -1196,6 +1305,8 @@ namespace {
         int frame = 0;
         int appliedVSync = -1;
         int appliedRawMouse = -1;
+        ut::DisplayMode displayMode = ut::DisplayMode::Windowed;
+        ut::DisplayMode lastFullscreenMode = ut::DisplayMode::Borderless;
         uint64_t frameDeadline = 0;
     };
 }

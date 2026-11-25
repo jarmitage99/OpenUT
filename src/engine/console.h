@@ -24,6 +24,7 @@ namespace ut {
         extern std::function<std::string()> resolutionsHook;
         extern std::function<void(int, int)> setResHook;
         extern std::function<void()> toggleFullscreenHook;
+        extern std::function<void()> endFullscreenHook;
         extern std::function<void()> reconnectHook;
         extern std::function<void()> screenshotHook;
     }
